@@ -509,7 +509,166 @@ function PainelGeral({receber, pagar}){
 
 /* ================= TAB: CONTAS (RECEBER / PAGAR genérico) ================= */
 
-function ContasTab({rows, kind}){
+/* ================= EDITOR DE REGISTRO (Contas a Receber / Pagar) ================= */
+
+function RecordEditor({kind, initial, vendedoresAll, onSave, onClose}){
+  const isReceber = kind === 'receber';
+  const blank = {
+    cod: '', nf: '', pessoa: '', desc: '', tipo: '', doc: '', portador: '',
+    valor: '', venc: '', status: 'EM PRAZO', pgto: '', vendedor: '',
+  };
+  const [form, setForm] = useState(() => ({
+    ...blank,
+    ...(initial ? {
+      cod: initial.cod || '', nf: initial.nf || '', pessoa: initial.pessoa || '',
+      desc: initial.desc || '', tipo: initial.tipo || '', doc: initial.doc || '',
+      portador: initial.portador || '', valor: initial.valor ?? '', venc: initial.venc || '',
+      status: initial.status || 'EM PRAZO', pgto: initial.pgto || '', vendedor: initial.vendedor || '',
+    } : {})
+  }));
+  const [vendedorNovo, setVendedorNovo] = useState('');
+  const [usarNovoVendedor, setUsarNovoVendedor] = useState(false);
+
+  const set = (k, v) => setForm(prev => ({...prev, [k]: v}));
+
+  const submit = (e) => {
+    e.preventDefault();
+    if(!form.pessoa.trim() || !form.valor || !form.venc){
+      alert('Preencha ao menos ' + (isReceber?'Cliente/Pagador':'Fornecedor/Favorecido') + ', Valor e Vencimento.');
+      return;
+    }
+    const valorNum = parseFloat(String(form.valor).replace(',', '.'));
+    const vendedorFinal = isReceber ? ((usarNovoVendedor ? vendedorNovo.trim() : form.vendedor) || 'SEM VENDEDOR') : undefined;
+    const today = new Date().toISOString().slice(0,10);
+    let diasVenc = initial ? (initial.diasVenc || 0) : 0;
+    if(form.status === 'VENCIDO'){
+      const d1 = new Date(form.venc), d2 = new Date(today);
+      diasVenc = Math.max(0, Math.round((d2-d1)/86400000));
+    } else {
+      diasVenc = 0;
+    }
+    const payload = {
+      cod: initial ? initial.cod : (form.cod.trim() || (kind.toUpperCase()+'-'+Date.now())),
+      nf: isReceber ? (form.nf || null) : (initial ? initial.nf : undefined),
+      pessoa: form.pessoa.trim(),
+      desc: form.desc.trim() || (initial ? initial.desc : 'LANÇAMENTO MANUAL'),
+      tipo: form.tipo.trim() || (initial ? initial.tipo : 'OUTROS'),
+      doc: !isReceber ? (form.doc.trim() || 'MANUAL') : (initial ? initial.doc : undefined),
+      portador: form.portador.trim() || (initial ? initial.portador : 'MANUAL'),
+      valor: valorNum,
+      venc: form.venc,
+      status: form.status,
+      pgto: form.status==='PAGO' ? (form.pgto || today) : null,
+      pago: form.status==='PAGO' ? valorNum : 0,
+      diasVenc,
+      cad: initial ? initial.cad : today,
+      multa: initial ? (initial.multa||0) : 0,
+      juros: initial ? (initial.juros||0) : 0,
+    };
+    if(isReceber) payload.vendedor = vendedorFinal;
+    // Remove chaves undefined (Firestore não aceita valores undefined)
+    Object.keys(payload).forEach(k => { if(payload[k] === undefined) delete payload[k]; });
+    onSave(payload, usarNovoVendedor ? vendedorNovo.trim() : null);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={(e)=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className="modal-box">
+        <div className="modal-head">
+          <div className="font-display font-bold text-base">
+            {initial ? '✏️ Editar' : '➕ Nova'} conta a {isReceber?'receber':'pagar'}
+          </div>
+          <button onClick={onClose} className="text-white text-xl leading-none px-2" style={{background:'transparent',border:'none',cursor:'pointer'}}>×</button>
+        </div>
+        <div className="p-6">
+          <form onSubmit={submit}>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="form-row col-span-2">
+                <label className="form-label">{isReceber?'Cliente / Pagador':'Fornecedor / Favorecido'}</label>
+                <input className="input-field w-full" value={form.pessoa} onChange={e=>set('pessoa', e.target.value)} placeholder="Nome"/>
+              </div>
+              {!initial && (
+                <div className="form-row">
+                  <label className="form-label">Código (opcional)</label>
+                  <input className="input-field w-full" value={form.cod} onChange={e=>set('cod', e.target.value)} placeholder="Gerado automaticamente se vazio"/>
+                </div>
+              )}
+              {isReceber && (
+                <div className="form-row">
+                  <label className="form-label">NF-e</label>
+                  <input className="input-field w-full" value={form.nf} onChange={e=>set('nf', e.target.value)} placeholder="Opcional"/>
+                </div>
+              )}
+              {!isReceber && (
+                <div className="form-row">
+                  <label className="form-label">Tipo Doc</label>
+                  <input className="input-field w-full" value={form.doc} onChange={e=>set('doc', e.target.value)} placeholder="Ex: CARTEIRA, PIX..."/>
+                </div>
+              )}
+              <div className="form-row">
+                <label className="form-label">{isReceber?'Tipo de Receita':'Tipo de Gasto'}</label>
+                <input className="input-field w-full" value={form.tipo} onChange={e=>set('tipo', e.target.value)} placeholder="Ex: VENDA DE MERCADORIAS"/>
+              </div>
+              <div className="form-row col-span-2">
+                <label className="form-label">Descrição</label>
+                <input className="input-field w-full" value={form.desc} onChange={e=>set('desc', e.target.value)} placeholder="Descrição do título"/>
+              </div>
+              <div className="form-row">
+                <label className="form-label">Valor (R$)</label>
+                <input className="input-field w-full" value={form.valor} onChange={e=>set('valor', e.target.value)} placeholder="Ex: 1500.00" inputMode="decimal"/>
+              </div>
+              <div className="form-row">
+                <label className="form-label">Vencimento</label>
+                <input type="date" className="input-field w-full" value={form.venc} onChange={e=>set('venc', e.target.value)}/>
+              </div>
+              <div className="form-row">
+                <label className="form-label">Portador</label>
+                <input className="input-field w-full" value={form.portador} onChange={e=>set('portador', e.target.value)} placeholder="Ex: SANTANDER"/>
+              </div>
+              <div className="form-row">
+                <label className="form-label">Data de Pagamento</label>
+                <input type="date" className="input-field w-full" value={form.pgto||''} onChange={e=>set('pgto', e.target.value)} disabled={form.status!=='PAGO'}/>
+              </div>
+              {isReceber && (
+                <div className="form-row col-span-2">
+                  <label className="form-label">Vendedor</label>
+                  {!usarNovoVendedor ? (
+                    <select className="input-field w-full" value={form.vendedor} onChange={e=>{
+                      if(e.target.value==='__novo__'){ setUsarNovoVendedor(true); } else { set('vendedor', e.target.value); }
+                    }}>
+                      <option value="">Selecione...</option>
+                      {vendedoresAll.map(v => <option key={v} value={v}>{v}</option>)}
+                      <option value="__novo__">+ Cadastrar novo vendedor</option>
+                    </select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input className="input-field w-full" value={vendedorNovo} onChange={e=>setVendedorNovo(e.target.value)} placeholder="Nome do novo vendedor"/>
+                      <button type="button" className="btn-secondary" onClick={()=>setUsarNovoVendedor(false)}>Cancelar</button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="form-row col-span-2">
+                <label className="form-label">Status</label>
+                <div className="flex gap-2">
+                  {[['EM PRAZO','Em prazo'],['PAGO','Pago'],['VENCIDO','Vencido']].map(([k,l])=>(
+                    <button type="button" key={k} onClick={()=>set('status', k)} className={"chip-btn "+(form.status===k?'on':'')}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="btn-primary">{initial ? 'Salvar alterações' : 'Adicionar'}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContasTab({rows, kind, vendedoresAll, onAddVendedor, onAdd, onEdit, onDelete, onToast}){
   const isReceber = kind === 'receber';
   const tipoField = isReceber ? 'tipo' : 'tipo';
   const tipoLabel = isReceber ? 'Tipo de Receita' : 'Tipo de Gasto';
@@ -526,7 +685,29 @@ function ContasTab({rows, kind}){
   const [pagIni, setPagIni] = useState('');
   const [pagFim, setPagFim] = useState('');
   const [page, setPage] = useState(0);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingRow, setEditingRow] = useState(null);
   const perPage = 25;
+
+  const handleSave = (payload, novoVendedorNome) => {
+    if(novoVendedorNome && onAddVendedor) onAddVendedor(novoVendedorNome);
+    if(editingRow){
+      onEdit(editingRow.cod, payload);
+      onToast && onToast('Registro atualizado com sucesso!');
+    } else {
+      onAdd(payload);
+      onToast && onToast('Registro adicionado com sucesso!');
+    }
+    setEditorOpen(false);
+    setEditingRow(null);
+  };
+
+  const handleDelete = (row) => {
+    if(window.confirm('Tem certeza que deseja excluir este registro de "'+(row.pessoa||'—')+'"? Esta ação não pode ser desfeita.')){
+      onDelete(row.cod);
+      onToast && onToast('Registro excluído.');
+    }
+  };
 
   const tipos = useMemo(()=>uniqSorted(rows, tipoField), [rows]);
   const extras = useMemo(()=>uniqSorted(rows, extraField), [rows]);
@@ -622,6 +803,7 @@ function ContasTab({rows, kind}){
           right={<div className="flex gap-2">
             {filtrosAtivos && <button onClick={limparFiltros} className="chip-btn">✕ Limpar filtros</button>}
             <button onClick={exportar} className="chip-btn on">⬇ Exportar Excel</button>
+            <button onClick={()=>{ setEditingRow(null); setEditorOpen(true); }} className="tool-btn">➕ Nova Conta</button>
           </div>}
         />
 
@@ -691,6 +873,7 @@ function ContasTab({rows, kind}){
                 <th>Status</th>
                 <th>{extraLabel}</th>
                 <th>Dias Venc.</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -706,16 +889,32 @@ function ContasTab({rows, kind}){
                   <td>{statusBadge(r.status)}</td>
                   <td className="text-gray-500">{r[extraField] || '—'}</td>
                   <td>{r.status==='VENCIDO' ? <span className="text-red-600 font-bold">{r.diasVenc}d</span> : '—'}</td>
+                  <td>
+                    <div className="flex gap-1">
+                      <button onClick={()=>{ setEditingRow(r); setEditorOpen(true); }} title="Editar" className="chip-btn" style={{padding:'4px 8px'}}>✏️</button>
+                      <button onClick={()=>handleDelete(r)} title="Excluir" className="chip-btn" style={{padding:'4px 8px', color:'#ef4444'}}>🗑️</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
               {pageRows.length===0 && (
-                <tr><td colSpan="10" className="text-center text-gray-400 py-8">Nenhum registro encontrado para os filtros aplicados.</td></tr>
+                <tr><td colSpan="11" className="text-center text-gray-400 py-8">Nenhum registro encontrado para os filtros aplicados.</td></tr>
               )}
             </tbody>
           </table>
         </div>
         <Pager page={page} setPage={setPage} total={filtered.length} perPage={perPage}/>
       </div>
+
+      {editorOpen && (
+        <RecordEditor
+          kind={kind}
+          initial={editingRow}
+          vendedoresAll={vendedoresAll || []}
+          onSave={handleSave}
+          onClose={()=>{ setEditorOpen(false); setEditingRow(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -983,11 +1182,37 @@ function Relatorios({receber, pagar}){
 
 /* ================= TAB: VENDEDORES ================= */
 
-function Vendedores({receber, comissoes}){
+function Vendedores({receber, comissoes, vendedoresAll, onAddVendedor, onRenameVendedor, onDeleteVendedor, onToast}){
   const [apenasVendas, setApenasVendas] = useState(true);
   const [ocultarSemVendedor, setOcultarSemVendedor] = useState(false);
   const [busca, setBusca] = useState('');
   const [ordem, setOrdem] = useState('valor');
+  const [novoNome, setNovoNome] = useState('');
+  const [editandoVendedor, setEditandoVendedor] = useState(null);
+  const [editNome, setEditNome] = useState('');
+
+  const cadastrarVendedor = (e) => {
+    e.preventDefault();
+    const nome = novoNome.trim();
+    if(!nome){ onToast && onToast('Digite o nome do vendedor.'); return; }
+    onAddVendedor(nome);
+    onToast && onToast('Vendedor cadastrado!');
+    setNovoNome('');
+  };
+
+  const salvarEdicao = (nomeAntigo) => {
+    const novo = editNome.trim();
+    if(!novo){ onToast && onToast('O nome não pode ficar vazio.'); return; }
+    onRenameVendedor(nomeAntigo, novo);
+    setEditandoVendedor(null);
+    setEditNome('');
+  };
+
+  const excluirVendedor = (nome) => {
+    if(window.confirm('Excluir o vendedor "'+nome+'"? Os títulos associados a ele serão reatribuídos para "SEM VENDEDOR".')){
+      onDeleteVendedor(nome);
+    }
+  };
 
   const base = useMemo(() => {
     return receber.filter(r => apenasVendas ? r.tipo==='VENDA DE MERCADORIAS' : true);
@@ -1036,6 +1261,51 @@ function Vendedores({receber, comissoes}){
         <KpiCard label="Vendedores Ativos" value={totalVendedores} icon="🧑‍💼"/>
         <KpiCard label="Maior Vendedor" value={topVendedor ? topVendedor.vendedor : '—'} sub={topVendedor?fmtMoney(topVendedor.valor):''} icon="🏆"/>
         <KpiCard label="Ticket Médio" value={fmtCompact(base.length ? totalGeral/base.length : 0)} sub="por título" icon="📐"/>
+      </div>
+
+      <div className="panel p-5 mb-5">
+        <SectionHeader
+          title="Gerenciar Vendedores"
+          subtitle="Adicione, edite (renomeie) ou exclua vendedores. Renomear atualiza todos os títulos associados; excluir reatribui os títulos para 'SEM VENDEDOR'."
+        />
+        <form onSubmit={cadastrarVendedor} className="flex gap-2 mb-4">
+          <input className="input-field w-full" value={novoNome} onChange={e=>setNovoNome(e.target.value)} placeholder="Nome do novo vendedor"/>
+          <button type="submit" className="btn-primary" style={{whiteSpace:'nowrap'}}>➕ Adicionar</button>
+        </form>
+        <div className="scrollbox" style={{maxHeight:260}}>
+          <table className="data-table">
+            <thead><tr><th>Vendedor</th><th style={{width:180}}>Ações</th></tr></thead>
+            <tbody>
+              {(vendedoresAll||[]).map((v,i) => (
+                <tr key={i}>
+                  <td>
+                    {editandoVendedor===v ? (
+                      <input className="input-field" style={{maxWidth:280}} value={editNome} onChange={e=>setEditNome(e.target.value)} autoFocus/>
+                    ) : (
+                      <span className="font-semibold">{v}</span>
+                    )}
+                  </td>
+                  <td>
+                    {editandoVendedor===v ? (
+                      <div className="flex gap-1">
+                        <button onClick={()=>salvarEdicao(v)} className="chip-btn on" style={{padding:'4px 10px'}}>Salvar</button>
+                        <button onClick={()=>{ setEditandoVendedor(null); setEditNome(''); }} className="chip-btn" style={{padding:'4px 10px'}}>Cancelar</button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-1">
+                        <button onClick={()=>{ setEditandoVendedor(v); setEditNome(v); }} title="Editar" className="chip-btn" style={{padding:'4px 8px'}}>✏️</button>
+                        <button onClick={()=>excluirVendedor(v)} title="Excluir" className="chip-btn" style={{padding:'4px 8px', color:'#ef4444'}}>🗑️</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {(!vendedoresAll || vendedoresAll.length===0) && (
+                <tr><td colSpan="2" className="text-center text-gray-400 py-6">Nenhum vendedor cadastrado.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="panel p-5 mb-5">
@@ -1330,6 +1600,39 @@ function Header(){
 }
 
 const DATA_DOC = db.collection('etnia_painel').doc('dados');
+const PRESENCE_COL = db.collection('etnia_painel_presenca');
+const PRESENCE_TIMEOUT_MS = 45000; // considera offline se não houver heartbeat há mais de 45s
+const PRESENCE_HEARTBEAT_MS = 20000;
+
+function OnlineStatus({ users }){
+  const [open, setOpen] = useState(false);
+  const count = users.length;
+  return (
+    <div className="relative">
+      <button
+        onClick={()=>setOpen(o=>!o)}
+        className="chip-btn flex items-center gap-2"
+        style={{background:'rgba(255,255,255,.08)', color:'#fff', border:'1px solid rgba(255,255,255,.15)'}}
+        title="Usuários online agora"
+      >
+        <span style={{width:8,height:8,borderRadius:999,background:'#4ade80',boxShadow:'0 0 6px #4ade80',display:'inline-block'}}></span>
+        {count} online
+      </button>
+      {open && (
+        <div className="panel p-3" style={{position:'absolute', right:0, top:'calc(100% + 6px)', minWidth:220, zIndex:50}}>
+          <div className="text-xs font-semibold mb-2" style={{color:'var(--ink-muted)'}}>Online agora</div>
+          {count===0 && <div className="text-xs" style={{color:'var(--ink-muted)'}}>Ninguém online.</div>}
+          {users.map(u => (
+            <div key={u.id} className="flex items-center gap-2 text-sm mb-1" style={{color:'#1a2140'}}>
+              <span style={{width:7,height:7,borderRadius:999,background:'#4ade80',display:'inline-block'}}></span>
+              {u.nome || u.email || 'Usuário'}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function LoginScreen(){
   const [email, setEmail] = useState('');
@@ -1377,17 +1680,61 @@ function LoginScreen(){
 
 function App({ user }){
   const [tab, setTab] = useState('geral');
-  const [vendasExtra, setVendasExtra] = useState([]);
+  const [vendasExtra, setVendasExtra] = useState([]);       // registros novos criados na aba Contas a Receber
+  const [pagarExtra, setPagarExtra] = useState([]);         // registros novos criados na aba Contas a Pagar
+  const [receberEdits, setReceberEdits] = useState({});     // { cod: {campo: valor, ...} }
+  const [pagarEdits, setPagarEdits] = useState({});
+  const [receberDeleted, setReceberDeleted] = useState([]); // lista de cods excluídos
+  const [pagarDeleted, setPagarDeleted] = useState([]);
   const [vendedoresExtra, setVendedoresExtra] = useState([]);
+  const [vendedorMap, setVendedorMap] = useState({});       // renomeações/exclusões de vendedor: {nomeAntigo: nomeNovo}
   const [comissoes, setComissoes] = useState({});
   const [showTools, setShowTools] = useState(false);
   const [toast, setToast] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState([]);
 
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(()=>setToast(''), 2800);
   };
+
+  // Presença: registra heartbeat deste usuário e escuta quem está online agora
+  useEffect(() => {
+    if(!user) return;
+    const ref = PRESENCE_COL.doc(user.uid);
+    const beat = () => {
+      ref.set({
+        email: user.email || '',
+        nome: (user.email || '').split('@')[0],
+        lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true }).catch(e=>console.error('presença:', e));
+    };
+    beat();
+    const interval = setInterval(beat, PRESENCE_HEARTBEAT_MS);
+    const handleUnload = () => { ref.delete().catch(()=>{}); };
+    window.addEventListener('beforeunload', handleUnload);
+
+    const unsub = PRESENCE_COL.onSnapshot(snap => {
+      const now = Date.now();
+      const list = [];
+      snap.forEach(doc => {
+        const d = doc.data();
+        const ts = d.lastSeen && d.lastSeen.toMillis ? d.lastSeen.toMillis() : 0;
+        if(ts && (now - ts) < PRESENCE_TIMEOUT_MS){
+          list.push({ id: doc.id, email: d.email, nome: d.nome });
+        }
+      });
+      setOnlineUsers(list);
+    }, e => console.error('presença snapshot:', e));
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', handleUnload);
+      ref.delete().catch(()=>{});
+      unsub();
+    };
+  }, [user]);
 
   // Carrega dados persistidos do Firestore
   useEffect(() => {
@@ -1397,7 +1744,13 @@ function App({ user }){
         if(snap.exists){
           const d = snap.data();
           if(d.vendasExtra) setVendasExtra(d.vendasExtra);
+          if(d.pagarExtra) setPagarExtra(d.pagarExtra);
+          if(d.receberEdits) setReceberEdits(d.receberEdits);
+          if(d.pagarEdits) setPagarEdits(d.pagarEdits);
+          if(d.receberDeleted) setReceberDeleted(d.receberDeleted);
+          if(d.pagarDeleted) setPagarDeleted(d.pagarDeleted);
           if(d.vendedoresExtra) setVendedoresExtra(d.vendedoresExtra);
+          if(d.vendedorMap) setVendedorMap(d.vendedorMap);
           if(d.comissoes) setComissoes(d.comissoes);
         }
       } catch(e){ console.error('Erro ao carregar dados do Firestore', e); }
@@ -1407,21 +1760,82 @@ function App({ user }){
 
   // Persiste alterações no Firestore (documento compartilhado entre usuários logados)
   useEffect(() => { if(loaded){ DATA_DOC.set({ vendasExtra }, { merge: true }).catch(e=>console.error(e)); } }, [vendasExtra, loaded]);
+  useEffect(() => { if(loaded){ DATA_DOC.set({ pagarExtra }, { merge: true }).catch(e=>console.error(e)); } }, [pagarExtra, loaded]);
+  useEffect(() => { if(loaded){ DATA_DOC.set({ receberEdits }, { merge: true }).catch(e=>console.error(e)); } }, [receberEdits, loaded]);
+  useEffect(() => { if(loaded){ DATA_DOC.set({ pagarEdits }, { merge: true }).catch(e=>console.error(e)); } }, [pagarEdits, loaded]);
+  useEffect(() => { if(loaded){ DATA_DOC.set({ receberDeleted }, { merge: true }).catch(e=>console.error(e)); } }, [receberDeleted, loaded]);
+  useEffect(() => { if(loaded){ DATA_DOC.set({ pagarDeleted }, { merge: true }).catch(e=>console.error(e)); } }, [pagarDeleted, loaded]);
   useEffect(() => { if(loaded){ DATA_DOC.set({ vendedoresExtra }, { merge: true }).catch(e=>console.error(e)); } }, [vendedoresExtra, loaded]);
+  useEffect(() => { if(loaded){ DATA_DOC.set({ vendedorMap }, { merge: true }).catch(e=>console.error(e)); } }, [vendedorMap, loaded]);
   useEffect(() => { if(loaded){ DATA_DOC.set({ comissoes }, { merge: true }).catch(e=>console.error(e)); } }, [comissoes, loaded]);
 
-  const receber = useMemo(() => [...window.__RECEBER__, ...vendasExtra], [vendasExtra]);
-  const pagar = window.__PAGAR__;
+  // Aplica edições, exclusões e renomeações de vendedor sobre uma lista base
+  const applyCrud = (base, extra, edits, deleted, isReceber) => {
+    const deletedSet = new Set(deleted);
+    return [...base, ...extra]
+      .filter(r => !deletedSet.has(r.cod))
+      .map(r => {
+        let row = edits[r.cod] ? {...r, ...edits[r.cod]} : r;
+        if(isReceber && row.vendedor && vendedorMap[row.vendedor]){
+          row = {...row, vendedor: vendedorMap[row.vendedor]};
+        }
+        return row;
+      });
+  };
+
+  const receber = useMemo(
+    () => applyCrud(window.__RECEBER__, vendasExtra, receberEdits, receberDeleted, true),
+    [vendasExtra, receberEdits, receberDeleted, vendedorMap]
+  );
+  const pagar = useMemo(
+    () => applyCrud(window.__PAGAR__, pagarExtra, pagarEdits, pagarDeleted, false),
+    [pagarExtra, pagarEdits, pagarDeleted]
+  );
 
   const vendedoresAll = useMemo(() => {
     const s = new Set(uniqSorted(receber, 'vendedor'));
-    vendedoresExtra.forEach(v => s.add(v));
+    vendedoresExtra.forEach(v => { if(!vendedorMap[v]) s.add(v); });
     return Array.from(s).sort();
-  }, [receber, vendedoresExtra]);
+  }, [receber, vendedoresExtra, vendedorMap]);
 
   const addVenda = (novaVenda) => setVendasExtra(prev => [...prev, novaVenda]);
   const addVendedor = (nome) => setVendedoresExtra(prev => prev.includes(nome) ? prev : [...prev, nome]);
   const setComissao = (vendedor, pct) => setComissoes(prev => ({...prev, [vendedor]: pct}));
+
+  // CRUD genérico de contas (receber/pagar)
+  const addRecord = (kind, record) => {
+    if(kind==='receber') setVendasExtra(prev => [...prev, record]);
+    else setPagarExtra(prev => [...prev, record]);
+  };
+  const editRecord = (kind, cod, patch) => {
+    if(kind==='receber') setReceberEdits(prev => ({...prev, [cod]: {...(prev[cod]||{}), ...patch}}));
+    else setPagarEdits(prev => ({...prev, [cod]: {...(prev[cod]||{}), ...patch}}));
+  };
+  const deleteRecord = (kind, cod) => {
+    if(kind==='receber') setReceberDeleted(prev => prev.includes(cod) ? prev : [...prev, cod]);
+    else setPagarDeleted(prev => prev.includes(cod) ? prev : [...prev, cod]);
+  };
+
+  // CRUD de vendedores: renomear reflete em todos os títulos; excluir reatribui para "SEM VENDEDOR"
+  const renameVendedor = (nomeAntigo, nomeNovo) => {
+    if(!nomeNovo || nomeNovo===nomeAntigo) return;
+    setVendedorMap(prev => ({...prev, [nomeAntigo]: nomeNovo}));
+    setVendedoresExtra(prev => prev.map(v => v===nomeAntigo ? nomeNovo : v));
+    setComissoes(prev => {
+      if(prev[nomeAntigo]===undefined) return prev;
+      const next = {...prev};
+      next[nomeNovo] = next[nomeAntigo];
+      delete next[nomeAntigo];
+      return next;
+    });
+    showToast('Vendedor renomeado para "'+nomeNovo+'".');
+  };
+  const deleteVendedor = (nome) => {
+    setVendedorMap(prev => ({...prev, [nome]: 'SEM VENDEDOR'}));
+    setVendedoresExtra(prev => prev.filter(v => v!==nome));
+    setComissoes(prev => { const next = {...prev}; delete next[nome]; return next; });
+    showToast('Vendedor "'+nome+'" excluído (títulos reatribuídos para "SEM VENDEDOR").');
+  };
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-6">
@@ -1436,6 +1850,7 @@ function App({ user }){
           ))}
         </div>
         <div className="flex items-center gap-2">
+          <OnlineStatus users={onlineUsers}/>
           <button className="tool-btn" onClick={()=>setShowTools(true)}>🛠️ Ferramentas</button>
           <button
             onClick={()=>auth.signOut()}
@@ -1449,9 +1864,9 @@ function App({ user }){
       </nav>
 
       {tab==='geral' && <PainelGeral receber={receber} pagar={pagar}/>}
-      {tab==='receber' && <ContasTab rows={receber} kind="receber"/>}
-      {tab==='pagar' && <ContasTab rows={pagar} kind="pagar"/>}
-      {tab==='vendedores' && <Vendedores receber={receber} comissoes={comissoes}/>}
+      {tab==='receber' && <ContasTab rows={receber} kind="receber" vendedoresAll={vendedoresAll} onAddVendedor={addVendedor} onAdd={(rec)=>addRecord('receber',rec)} onEdit={(cod,patch)=>editRecord('receber',cod,patch)} onDelete={(cod)=>deleteRecord('receber',cod)} onToast={showToast}/>}
+      {tab==='pagar' && <ContasTab rows={pagar} kind="pagar" onAdd={(rec)=>addRecord('pagar',rec)} onEdit={(cod,patch)=>editRecord('pagar',cod,patch)} onDelete={(cod)=>deleteRecord('pagar',cod)} onToast={showToast}/>}
+      {tab==='vendedores' && <Vendedores receber={receber} comissoes={comissoes} vendedoresAll={vendedoresAll} onAddVendedor={addVendedor} onRenameVendedor={renameVendedor} onDeleteVendedor={deleteVendedor} onToast={showToast}/>}
       {tab==='fluxo' && <FluxoCaixa receber={receber} pagar={pagar}/>}
       {tab==='vencidos' && <Vencidos receber={receber} pagar={pagar}/>}
       {tab==='categorias' && <Categorias receber={receber} pagar={pagar}/>}
